@@ -1,7 +1,10 @@
 'use client'
 
-import { useState } from 'react'
-import { ArrowRight, Check, ChevronDown, Copy, Instagram, Linkedin, Mail, MapPin, Share2, Sparkles } from 'lucide-react'
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
+import { ArrowRight, Check, ChevronDown, Copy, LoaderCircle, Mail, MapPin, Sparkles } from 'lucide-react'
+import { Brand } from '@/components/brand'
+import { INSTAGRAM_URL, InstagramIcon, WHATSAPP_URL, WhatsAppIcon } from '@/components/social-icons'
+import { HONEYPOT_FIELD, LIMITS, type EntryField, type EntryResponse, type FieldErrors } from '@/lib/entry-types'
 
 const steps = [
   ['01', 'Enter with your idea', 'Takes 30 seconds. Tell us what you want to build.'],
@@ -27,48 +30,149 @@ const faqs = [
   ["What if I don't have an idea yet?", 'You can still enter if you have a problem you would like to solve. We will help you shape it at the workshop.'],
 ]
 
-function EntryForm() {
-  const [submitted, setSubmitted] = useState(false)
-  const [copied, setCopied] = useState(false)
-  // Built from the site's own address when the form is submitted (client only), so it works on any domain.
-  const [origin, setOrigin] = useState('')
-  const link = `${origin}?ref=ABC123`
-  const shareText = encodeURIComponent(`Build your app in Amsterdam ${link}`)
+const REF_KEY = 'byoa_ref'
+const VISIT_KEY = 'byoa_visit_'
+const REF_PATTERN = /^[A-Z0-9]{6,8}$/
+// Used when sessionStorage is unavailable (some private modes), so the code still reaches the form.
+let memoryRef = ''
+const visitedInMemory = new Set<string>()
 
-  if (submitted) return (
-    <div className="success-card" aria-live="polite">
+function readRef() {
+  try { return window.sessionStorage.getItem(REF_KEY) || memoryRef } catch { return memoryRef }
+}
+
+// Runs once after mount: remembers ?ref=CODE for the form and counts one visit per browser session.
+function useReferralTracking() {
+  useEffect(() => {
+    const code = (new URLSearchParams(window.location.search).get('ref') ?? '').trim().toUpperCase()
+    if (!REF_PATTERN.test(code)) return
+    memoryRef = code
+    let seen = false
+    try {
+      window.sessionStorage.setItem(REF_KEY, code)
+      seen = window.sessionStorage.getItem(VISIT_KEY + code) === '1'
+      window.sessionStorage.setItem(VISIT_KEY + code, '1')
+    } catch {
+      seen = visitedInMemory.has(code)
+    }
+    if (seen || visitedInMemory.has(code)) return
+    visitedInMemory.add(code)
+    fetch('/api/visits', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ref: code }), keepalive: true }).catch(() => {})
+  }, [])
+}
+
+async function copyText(text: string) {
+  try { await navigator.clipboard.writeText(text); return true } catch { /* fall through to the old way */ }
+  const area = document.createElement('textarea')
+  area.value = text
+  area.setAttribute('readonly', '')
+  area.style.position = 'fixed'
+  area.style.opacity = '0'
+  document.body.appendChild(area)
+  area.select()
+  let ok = false
+  try { ok = document.execCommand('copy') } catch { ok = false }
+  area.remove()
+  return ok
+}
+
+function SuccessCard({ link }: { link: string }) {
+  const [copied, setCopied] = useState<'' | 'Copied' | 'Select and copy'>('')
+  const card = useRef<HTMLDivElement>(null)
+  useEffect(() => { card.current?.focus({ preventScroll: true }) }, [])
+  useEffect(() => {
+    if (!copied) return
+    const timer = window.setTimeout(() => setCopied(''), 2200)
+    return () => window.clearTimeout(timer)
+  }, [copied])
+  const shareText = encodeURIComponent(`Build your app in Amsterdam ${link}`)
+  return (
+    <div className="success-card" ref={card} tabIndex={-1} role="status">
       <div className="success-icon"><Check /></div>
       <p className="eyebrow">You&apos;re in</p>
       <h3>Bring friends.</h3>
       <p>If any of them wins, you win too. Share your link and bring them to the workshop.</p>
-      <div className="share-link"><span>{link}</span><button type="button" onClick={() => { navigator.clipboard?.writeText(link); setCopied(true) }} aria-label="Copy referral link"><Copy size={16} />{copied ? 'Copied' : 'Copy'}</button></div>
-      <div className="share-actions"><a href={`mailto:?subject=${encodeURIComponent('Build your app in Amsterdam')}&body=${encodeURIComponent(`Join me at the workshop: ${link}`)}`}><Mail size={16} /> Email</a><a href={`https://wa.me/?text=${shareText}`} target="_blank" rel="noreferrer"><Share2 size={16} /> WhatsApp</a></div>
+      <div className="share-link"><span>{link}</span><button type="button" onClick={async () => setCopied((await copyText(link)) ? 'Copied' : 'Select and copy')} aria-label="Copy referral link">{copied === 'Copied' ? <Check size={16} /> : <Copy size={16} />}<span aria-live="polite">{copied || 'Copy'}</span></button></div>
+      <div className="share-actions"><a href={`mailto:?subject=${encodeURIComponent('Build your app in Amsterdam')}&body=${encodeURIComponent(`Join me at the workshop: ${link}`)}`}><Mail size={16} /> Email</a><a href={`https://wa.me/?text=${shareText}`} target="_blank" rel="noopener noreferrer"><WhatsAppIcon /> WhatsApp</a></div>
     </div>
   )
+}
+
+const emptyValues = { firstName: '', email: '', phone: '', choice: '' as '' | 'yes' | 'no', idea: '', [HONEYPOT_FIELD]: '' }
+const fieldOrder: EntryField[] = ['firstName', 'email', 'phone', 'hasIdea', 'idea']
+const fieldIds: Record<EntryField, string> = { firstName: 'entry-first-name', email: 'entry-email', phone: 'entry-phone', hasIdea: 'entry-idea-yes', idea: 'entry-idea' }
+
+function EntryForm() {
+  const [values, setValues] = useState(emptyValues)
+  const [errors, setErrors] = useState<FieldErrors>({})
+  const [formError, setFormError] = useState('')
+  const [busy, setBusy] = useState(false)
+  // Built from the site's own address after a successful entry (client only), so it works on any domain.
+  const [link, setLink] = useState('')
+
+  const set = (field: keyof typeof emptyValues, errorField?: EntryField) => (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    const value = event.target.value
+    setValues((current) => ({ ...current, [field]: value }))
+    if (errorField && errors[errorField]) setErrors((current) => ({ ...current, [errorField]: undefined }))
+  }
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (busy) return
+    setBusy(true)
+    setFormError('')
+    const hasIdea = values.choice === '' ? undefined : values.choice === 'yes'
+    const ref = readRef()
+    const payload = { firstName: values.firstName, email: values.email, phone: values.phone, hasIdea, ...(hasIdea ? { idea: values.idea } : {}), ...(ref ? { ref } : {}), [HONEYPOT_FIELD]: values[HONEYPOT_FIELD] }
+    try {
+      const response = await fetch('/api/entries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      const data = (await response.json()) as EntryResponse
+      if (data.ok) { setErrors({}); setLink(`${window.location.origin}?ref=${data.referralCode}`); return }
+      if (data.error === 'validation') {
+        setErrors(data.fieldErrors)
+        setFormError(data.message)
+        const first = fieldOrder.find((field) => data.fieldErrors[field])
+        if (first) document.getElementById(fieldIds[first])?.focus()
+      } else {
+        setErrors({})
+        setFormError(data.message || 'Something went wrong. Please try again in a moment.')
+      }
+    } catch {
+      setFormError('We could not reach the server. Check your connection and try again.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (link) return <SuccessCard link={link} />
+
+  const describe = (field: EntryField) => ({ 'aria-invalid': errors[field] ? true : undefined, 'aria-describedby': errors[field] ? `${fieldIds[field]}-error` : undefined })
+  const fieldError = (field: EntryField) => errors[field] && <p className="field-error" id={`${fieldIds[field]}-error`}>{errors[field]}</p>
+  const star = <span className="req" aria-hidden="true"> *</span>
 
   return (
-    <form className="entry-form" onSubmit={(event) => { event.preventDefault(); setOrigin(window.location.origin); setSubmitted(true) }}>
+    <form className="entry-form" onSubmit={submit} noValidate aria-busy={busy}>
       <div className="form-heading"><span className="form-kicker">Free giveaway</span><h2>Enter with your idea.</h2><p>It takes 30 seconds.</p></div>
-      <label>First name<input required name="name" type="text" autoComplete="given-name" placeholder="Your first name" /></label>
-      <label>Email<input required name="email" type="email" autoComplete="email" placeholder="you@example.com" /></label>
-      <label>Your app idea<textarea required name="idea" maxLength={200} rows={2} placeholder="e.g. a booking app for my yoga studio" /></label>
-      <label>How did you hear about this?<select name="source" defaultValue=""><option value="">Choose one</option><option>Instagram/Facebook ad</option><option>LinkedIn</option><option>A friend</option><option>Other</option></select></label>
-      <button className="button button-primary form-submit" type="submit">Enter the giveaway <ArrowRight size={17} /></button>
+      <div className="field"><label htmlFor={fieldIds.firstName}>First name{star}</label><input id={fieldIds.firstName} required name="firstName" type="text" autoComplete="given-name" autoCapitalize="words" maxLength={LIMITS.firstName} placeholder="Your first name" value={values.firstName} onChange={set('firstName', 'firstName')} {...describe('firstName')} />{fieldError('firstName')}</div>
+      <div className="field"><label htmlFor={fieldIds.email}>Email{star}</label><input id={fieldIds.email} required name="email" type="email" inputMode="email" autoComplete="email" autoCapitalize="none" spellCheck={false} maxLength={LIMITS.email} placeholder="you@example.com" value={values.email} onChange={set('email', 'email')} {...describe('email')} />{fieldError('email')}</div>
+      <div className="field"><label htmlFor={fieldIds.phone}>Phone number{star}</label><input id={fieldIds.phone} required name="phone" type="tel" inputMode="tel" autoComplete="tel" maxLength={LIMITS.phone} placeholder="+31 6 1234 5678" value={values.phone} onChange={set('phone', 'phone')} {...describe('phone')} />{fieldError('phone')}</div>
+      <fieldset className="choice" aria-describedby={errors.hasIdea ? `${fieldIds.hasIdea}-error` : undefined}>
+        <legend>Do you have an app idea?{star}</legend>
+        <label className="choice-option"><input id={fieldIds.hasIdea} type="radio" name="hasIdea" value="yes" required checked={values.choice === 'yes'} onChange={set('choice', 'hasIdea')} aria-invalid={errors.hasIdea ? true : undefined} /><span>I have an app idea</span></label>
+        <label className="choice-option"><input type="radio" name="hasIdea" value="no" required checked={values.choice === 'no'} onChange={set('choice', 'hasIdea')} aria-invalid={errors.hasIdea ? true : undefined} /><span>I don&apos;t have an app idea yet</span></label>
+        {fieldError('hasIdea')}
+      </fieldset>
+      {values.choice === 'yes' && <div className="field"><label htmlFor={fieldIds.idea}>Your app idea{star}</label><textarea id={fieldIds.idea} required name="idea" maxLength={LIMITS.idea} rows={3} placeholder="e.g. a booking app for my yoga studio" value={values.idea} onChange={set('idea', 'idea')} {...describe('idea')} />{fieldError('idea')}</div>}
+      <div className="hp" aria-hidden="true"><label htmlFor="entry-website">Website</label><input id="entry-website" name={HONEYPOT_FIELD} type="text" tabIndex={-1} autoComplete="off" value={values[HONEYPOT_FIELD]} onChange={set(HONEYPOT_FIELD)} /></div>
+      <div role="alert">{formError && <p className="form-error">{formError}</p>}</div>
+      <button className="button button-primary form-submit" type="submit" disabled={busy}>{busy ? <>Sending your entry… <LoaderCircle className="spin" size={17} /></> : <>Enter the giveaway <ArrowRight size={17} /></>}</button>
       <p className="form-note">Free to enter. You&apos;ll get your workshop ticket by email. First 6 registrations get a 1-week Claude Code pass.</p>
     </form>
   )
 }
 
-function Brand({ descriptor = true }: { descriptor?: boolean }) {
-  return (
-    <a className="brand" href="#top" aria-label="BYOA — Build Your Own App">
-      <span className="brand-mark" aria-hidden="true"><span className="brand-block brand-by"><span>BY</span></span><span className="brand-block brand-oa"><span>OA</span></span></span>
-      {descriptor && <span className="brand-desc" aria-hidden="true">build your own app</span>}
-    </a>
-  )
-}
-
 export default function Page() {
+  useReferralTracking()
   const scrollToForm = () => document.getElementById('entry')?.scrollIntoView({ behavior: 'smooth' })
   return (
     <main>
@@ -82,8 +186,8 @@ export default function Page() {
       <section className="section-shell section teacher-section"><div className="teacher-photo" aria-label="Instructor photo placeholder"><span>[PHOTO]</span></div><div><p className="eyebrow">Who&apos;s teaching</p><h2>[NAME]</h2><p className="teacher-copy">Senior software engineer, 10+ years building production software. Teaches where AI-built apps break — and how to get past it.</p><button className="button button-secondary" onClick={scrollToForm}>Meet me at the workshop <ArrowRight size={17} /></button></div></section>
       <section className="accent-section"><div className="section-shell section founding"><div><p className="eyebrow">Everyone else</p><h2>Join at the<br /><em>founding price.</em></h2></div><div><p>If you don&apos;t win, workshop attendees can join the first cohort for <strong>€1,300</strong>. List price is €2,600 once the results are in.</p><p>Valid for 72 hours after the workshop. Pairs building one idea together pay 1.5 seats.</p><button className="button button-dark" onClick={scrollToForm}>Get my workshop ticket <ArrowRight size={17} /></button></div></div></section>
       <section className="section-shell section faq-section"><div className="section-intro"><p className="eyebrow">Questions, answered</p><h2>Good to know.</h2></div><div className="faq-list">{faqs.map(([question, answer]) => <details key={question}><summary>{question}<ChevronDown size={20} /></summary><p>{answer}</p></details>)}</div><button className="button button-primary" onClick={scrollToForm}>Enter the giveaway <ArrowRight size={17} /></button></section>
-      <section className="final-cta"><div className="section-shell"><p className="eyebrow">Your idea is waiting</p><h2>Have a business idea?<br /><em>Build the app yourself.</em></h2><button className="button button-light" onClick={scrollToForm}>Enter the giveaway <ArrowRight size={17} /></button></div></section>
-      <footer className="footer"><div className="section-shell footer-inner"><Brand descriptor={false} /><div><a href="#">Giveaway terms</a><a href="#">Privacy policy</a></div><p>Made for people with an idea.</p></div></footer>
+      <section className="final-cta"><div className="section-shell"><p className="eyebrow">Your idea is waiting</p><h2>Have a business idea?<br /><em>Build the app yourself.</em></h2><button className="button button-light" onClick={scrollToForm}>Enter the giveaway <ArrowRight size={17} /></button><p className="cta-contact">Got a question first? <a href={WHATSAPP_URL} target="_blank" rel="noopener noreferrer">WhatsApp us</a> or find us on <a href={INSTAGRAM_URL} target="_blank" rel="noopener noreferrer">Instagram</a>.</p></div></section>
+      <footer className="footer"><div className="section-shell footer-contact"><div><h2>Got a question?</h2><p>Message us. A real person answers.</p></div><div className="contact-links"><a className="button button-light" href={WHATSAPP_URL} target="_blank" rel="noopener noreferrer"><WhatsAppIcon size={18} /> WhatsApp us</a><a className="button button-ghost" href={INSTAGRAM_URL} target="_blank" rel="noopener noreferrer"><InstagramIcon size={18} /> Instagram</a></div></div><div className="section-shell footer-inner"><Brand descriptor={false} /><div><a href="#">Giveaway terms</a><a href="#">Privacy policy</a></div><p>Made for people with an idea.</p></div></footer>
       <div className="mobile-bar"><button className="button button-primary" onClick={scrollToForm}>Enter the giveaway <ArrowRight size={17} /></button></div>
     </main>
   )
