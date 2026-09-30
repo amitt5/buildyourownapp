@@ -1,6 +1,11 @@
 import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
+import { Anton, Antonio, Inter_Tight } from 'next/font/google'
 import './globals.css'
+
+const display = Antonio({ subsets: ['latin'], weight: ['700'], variable: '--font-display', display: 'swap' })
+const logo = Anton({ subsets: ['latin'], weight: '400', variable: '--font-logo', display: 'swap' })
+const body = Inter_Tight({ subsets: ['latin'], weight: ['400', '500', '600', '700', '800'], variable: '--font-body', display: 'swap' })
 
 export const metadata: Metadata = {
   title: 'Build your app in Amsterdam | Win a free 6-week program',
@@ -40,7 +45,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className="antialiased">
+      <body className={`${display.variable} ${body.variable} ${logo.variable} antialiased`}>
         {children}
         {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>

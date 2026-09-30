@@ -30,7 +30,10 @@ const faqs = [
 function EntryForm() {
   const [submitted, setSubmitted] = useState(false)
   const [copied, setCopied] = useState(false)
-  const link = 'https://buildit.amsterdam?ref=ABC123'
+  // Built from the site's own address when the form is submitted (client only), so it works on any domain.
+  const [origin, setOrigin] = useState('')
+  const link = `${origin}?ref=ABC123`
+  const shareText = encodeURIComponent(`Build your app in Amsterdam ${link}`)
 
   if (submitted) return (
     <div className="success-card" aria-live="polite">
@@ -39,12 +42,12 @@ function EntryForm() {
       <h3>Bring friends.</h3>
       <p>If any of them wins, you win too. Share your link and bring them to the workshop.</p>
       <div className="share-link"><span>{link}</span><button type="button" onClick={() => { navigator.clipboard?.writeText(link); setCopied(true) }} aria-label="Copy referral link"><Copy size={16} />{copied ? 'Copied' : 'Copy'}</button></div>
-      <div className="share-actions"><a href={`mailto:?subject=Build your app in Amsterdam&body=Join me at the workshop: ${link}`}><Mail size={16} /> Email</a><a href={`https://wa.me/?text=Build%20your%20app%20in%20Amsterdam%20${link}`} target="_blank" rel="noreferrer"><Share2 size={16} /> WhatsApp</a></div>
+      <div className="share-actions"><a href={`mailto:?subject=${encodeURIComponent('Build your app in Amsterdam')}&body=${encodeURIComponent(`Join me at the workshop: ${link}`)}`}><Mail size={16} /> Email</a><a href={`https://wa.me/?text=${shareText}`} target="_blank" rel="noreferrer"><Share2 size={16} /> WhatsApp</a></div>
     </div>
   )
 
   return (
-    <form className="entry-form" onSubmit={(event) => { event.preventDefault(); setSubmitted(true) }}>
+    <form className="entry-form" onSubmit={(event) => { event.preventDefault(); setOrigin(window.location.origin); setSubmitted(true) }}>
       <div className="form-heading"><span className="form-kicker">Free giveaway</span><h2>Enter with your idea.</h2><p>It takes 30 seconds.</p></div>
       <label>First name<input required name="name" type="text" autoComplete="given-name" placeholder="Your first name" /></label>
       <label>Email<input required name="email" type="email" autoComplete="email" placeholder="you@example.com" /></label>
@@ -56,11 +59,20 @@ function EntryForm() {
   )
 }
 
+function Brand({ descriptor = true }: { descriptor?: boolean }) {
+  return (
+    <a className="brand" href="#top" aria-label="BYOA — Build Your Own App">
+      <span className="brand-mark" aria-hidden="true"><span className="brand-block brand-by"><span>BY</span></span><span className="brand-block brand-oa"><span>OA</span></span></span>
+      {descriptor && <span className="brand-desc" aria-hidden="true">build your own app</span>}
+    </a>
+  )
+}
+
 export default function Page() {
   const scrollToForm = () => document.getElementById('entry')?.scrollIntoView({ behavior: 'smooth' })
   return (
     <main>
-      <header className="site-header"><a className="brand" href="#top">BUILD<span>IT</span></a><button className="header-cta" onClick={scrollToForm}>Enter the giveaway <ArrowRight size={15} /></button></header>
+      <header className="site-header"><Brand /><button className="header-cta" onClick={scrollToForm}>Enter the giveaway <ArrowRight size={15} /></button></header>
       <section className="hero section-shell" id="top"><div className="hero-copy"><p className="eyebrow"><span className="live-dot" /> Amsterdam · In person · 6 weeks</p><h1>Have a business idea?<br /><em>Build the app yourself.</em></h1><p className="hero-sub">Win a free seat in a 6-week program in Amsterdam where you build and launch your own app. <strong>No coding background needed.</strong></p><div className="hero-proof"><span><Check size={15} /> Build a real demo</span><span><Check size={15} /> Learn by doing</span></div></div><div className="hero-form" id="entry"><EntryForm /><p className="under-form">Entering gets you a ticket to the Saturday workshop on <strong>[DATE]</strong>. Winner drawn live at the end.</p></div></section>
       <section className="strip"><div className="section-shell strip-inner"><span>One idea.</span><span className="strip-line" /><span>One Saturday.</span><span className="strip-line" /><span>One shot at the full program.</span></div></section>
       <section className="section-shell section"><div className="section-intro"><p className="eyebrow">The simple version</p><h2>From idea to something<br /><em>you can show people.</em></h2></div><div className="steps-grid">{steps.map(([number, title, text]) => <article className="step" key={number}><span className="step-number">{number}</span><h3>{title}</h3><p>{text}</p></article>)}</div><button className="button button-secondary" onClick={scrollToForm}>Enter the giveaway <ArrowRight size={17} /></button></section>
@@ -71,7 +83,7 @@ export default function Page() {
       <section className="accent-section"><div className="section-shell section founding"><div><p className="eyebrow">Everyone else</p><h2>Join at the<br /><em>founding price.</em></h2></div><div><p>If you don&apos;t win, workshop attendees can join the first cohort for <strong>€1,300</strong>. List price is €2,600 once the results are in.</p><p>Valid for 72 hours after the workshop. Pairs building one idea together pay 1.5 seats.</p><button className="button button-dark" onClick={scrollToForm}>Get my workshop ticket <ArrowRight size={17} /></button></div></div></section>
       <section className="section-shell section faq-section"><div className="section-intro"><p className="eyebrow">Questions, answered</p><h2>Good to know.</h2></div><div className="faq-list">{faqs.map(([question, answer]) => <details key={question}><summary>{question}<ChevronDown size={20} /></summary><p>{answer}</p></details>)}</div><button className="button button-primary" onClick={scrollToForm}>Enter the giveaway <ArrowRight size={17} /></button></section>
       <section className="final-cta"><div className="section-shell"><p className="eyebrow">Your idea is waiting</p><h2>Have a business idea?<br /><em>Build the app yourself.</em></h2><button className="button button-light" onClick={scrollToForm}>Enter the giveaway <ArrowRight size={17} /></button></div></section>
-      <footer className="footer"><div className="section-shell footer-inner"><a className="brand" href="#top">BUILD<span>IT</span></a><div><a href="#">Giveaway terms</a><a href="#">Privacy policy</a><a href="mailto:hello@buildit.amsterdam">hello@buildit.amsterdam</a></div><p>Made for people with an idea.</p></div></footer>
+      <footer className="footer"><div className="section-shell footer-inner"><Brand descriptor={false} /><div><a href="#">Giveaway terms</a><a href="#">Privacy policy</a></div><p>Made for people with an idea.</p></div></footer>
       <div className="mobile-bar"><button className="button button-primary" onClick={scrollToForm}>Enter the giveaway <ArrowRight size={17} /></button></div>
     </main>
   )
