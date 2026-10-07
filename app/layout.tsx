@@ -8,8 +8,8 @@ const logo = Anton({ subsets: ['latin'], weight: '400', variable: '--font-logo',
 const body = Inter_Tight({ subsets: ['latin'], weight: ['400', '500', '600', '700', '800'], variable: '--font-body', display: 'swap' })
 
 export const metadata: Metadata = {
-  title: 'Build your app in Amsterdam | Win a free 6-week program',
-  description: 'Have a business idea? Build the app yourself. Enter to win a free seat in a 6-week in-person app-building program in Amsterdam.',
+  title: 'Build your app in Amsterdam | Win a free 4–6 week program',
+  description: 'Have a business idea? Build the app yourself. Come to a free workshop in Amsterdam on Sat 31 Oct 2026 and win a free seat in a 4–6 week in-person app-building program. No coding background needed.',
   generator: 'v0.app',
   icons: {
     icon: [
